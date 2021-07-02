@@ -52,6 +52,7 @@ func priceLoop() {
 
 func main() {
 	go priceLoop()
+	menuet.App().Label = "qiao-coin-bar"
 	menuet.App().RunApplication()
 }
 
