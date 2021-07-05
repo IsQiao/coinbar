@@ -23,6 +23,7 @@ func getPricesSetTitle() {
 	btcPrice := 0.0
 	gtcPrice := 0.0
 	solPrice := 0.0
+	dotPrice := 0.0
 
 	for _, item := range prices {
 		switch item.Symbol {
@@ -38,10 +39,14 @@ func getPricesSetTitle() {
 		case "SOLUSDT":
 			solPrice = item.Price
 			break
+		case "DOTUSDT":
+			dotPrice = item.Price
+			break
 		}
 	}
 
-	title := fmt.Sprintf("SOL: %v GTC: %v NEAR: %v BTC: %v",
+	title := fmt.Sprintf("DOT: %v SOL: %v GTC: %v NEAR: %v BTC: %v",
+		fmt.Sprintf("%.2f", dotPrice),
 		fmt.Sprintf("%.2f", solPrice),
 		fmt.Sprintf("%.2f", gtcPrice),
 		fmt.Sprintf("%.2f", nearPrice),
