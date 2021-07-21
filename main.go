@@ -6,9 +6,10 @@ import (
 	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net/http"
+	"strings"
 	"time"
 
-	"github.com/caseymrm/menuet"
+	"github.com/getlantern/systray"
 )
 
 func getPricesSetTitle() {
@@ -20,28 +21,10 @@ func getPricesSetTitle() {
 		logrus.Error(err)
 	}
 
-	var symbolPriceMap = map[string]float64{}
-
 	for _, item := range prices {
-		symbolPriceMap[item.Symbol] = item.Price
-	}
-
-	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT"}
-
-	var childMenus []menuet.MenuItem
-	for _, token := range whiteLists {
-		if val, ok := symbolPriceMap[token]; ok {
-			childMenus = append(childMenus, menuet.MenuItem{
-				Text: fmt.Sprintf("%s: %v", token, val),
-				Clicked: func() {
-
-				},
-			})
+		if val, ok := coinMenusMap[item.Symbol]; ok {
+			val.SetTitle(fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
 		}
-	}
-
-	menuet.App().Children = func() []menuet.MenuItem {
-		return childMenus
 	}
 }
 
@@ -53,16 +36,48 @@ func priceLoop() {
 
 func main() {
 	go priceLoop()
-	menuet.App().Label = "qiao-coin-bar"
-	menuet.App().SetMenuState(&menuet.MenuState{
-		Title: "COIN",
-	})
-	menuet.App().RunApplication()
+	systray.Run(onReady, onExit)
+}
+
+var coinMenusMap = map[string]*systray.MenuItem{}
+
+func onReady() {
+	systray.SetTitle("COIN")
+
+	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT"}
+
+	for _, white := range whiteLists {
+		menuItem := systray.AddMenuItem(fmt.Sprintf("%v loading...", SymbolFormat(white)), "")
+		if _, ok := coinMenusMap[white]; !ok {
+			coinMenusMap[white] = menuItem
+		}
+	}
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
+
+	go func() {
+		for {
+			select {
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
+	}()
+}
+
+func onExit() {
 }
 
 type SymbolPrice struct {
 	Symbol string  `json:"symbol"`
 	Price  float64 `json:"price,string"`
+}
+
+func SymbolFormat(symbol string) string {
+	result := symbol
+	result = strings.Replace(result, "USDT", "/USDT", 1)
+	return result
 }
 
 var myClient = &http.Client{Timeout: 10 * time.Second}
@@ -84,4 +99,21 @@ func getJson(url string, target interface{}) error {
 		return err
 	}
 	return nil
+}
+
+func format12(x float64) string {
+	if x >= 1e12 {
+		// Check to see how many fraction digits fit in:
+		s := fmt.Sprintf("%.g", x)
+		format := fmt.Sprintf("%%12.%dg", 12-len(s))
+		return fmt.Sprintf(format, x)
+	}
+
+	// Check to see how many fraction digits fit in:
+	s := fmt.Sprintf("%.0f", x)
+	if len(s) == 12 {
+		return s
+	}
+	format := fmt.Sprintf("%%%d.%df", len(s), 12-len(s)-1)
+	return fmt.Sprintf(format, x)
 }
