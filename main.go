@@ -13,49 +13,36 @@ import (
 
 func getPricesSetTitle() {
 	defer time.Sleep(5 * time.Second)
-	url := fmt.Sprintf("%s%s", "https://api1.binance.com", "/api/v3/ticker/price")
+	url := "https://api1.binance.com/api/v3/ticker/price"
 	var prices []SymbolPrice
 	err := getJson(url, &prices)
 	if err != nil {
 		logrus.Error(err)
 	}
-	nearPrice := 0.0
-	btcPrice := 0.0
-	gtcPrice := 0.0
-	solPrice := 0.0
-	dotPrice := 0.0
+
+	var symbolPriceMap = map[string]float64{}
 
 	for _, item := range prices {
-		switch item.Symbol {
-		case "NEARUSDT":
-			nearPrice = item.Price
-			break
-		case "GTCUSDT":
-			gtcPrice = item.Price
-			break
-		case "BTCUSDT":
-			btcPrice = item.Price
-			break
-		case "SOLUSDT":
-			solPrice = item.Price
-			break
-		case "DOTUSDT":
-			dotPrice = item.Price
-			break
+		symbolPriceMap[item.Symbol] = item.Price
+	}
+
+	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT"}
+
+	var childMenus []menuet.MenuItem
+	for _, token := range whiteLists {
+		if val, ok := symbolPriceMap[token]; ok {
+			childMenus = append(childMenus, menuet.MenuItem{
+				Text: fmt.Sprintf("%s: %v", token, val),
+				Clicked: func() {
+
+				},
+			})
 		}
 	}
 
-	title := fmt.Sprintf("DOT: %v SOL: %v GTC: %v NEAR: %v BTC: %v",
-		fmt.Sprintf("%.2f", dotPrice),
-		fmt.Sprintf("%.2f", solPrice),
-		fmt.Sprintf("%.2f", gtcPrice),
-		fmt.Sprintf("%.2f", nearPrice),
-		fmt.Sprintf("%.0f", btcPrice),
-	)
-
-	menuet.App().SetMenuState(&menuet.MenuState{
-		Title: title,
-	})
+	menuet.App().Children = func() []menuet.MenuItem {
+		return childMenus
+	}
 }
 
 func priceLoop() {
@@ -67,6 +54,9 @@ func priceLoop() {
 func main() {
 	go priceLoop()
 	menuet.App().Label = "qiao-coin-bar"
+	menuet.App().SetMenuState(&menuet.MenuState{
+		Title: "COIN",
+	})
 	menuet.App().RunApplication()
 }
 
