@@ -1,13 +1,15 @@
 package main
 
 import (
+	"coinbar/imgs"
 	"encoding/json"
 	"fmt"
-	"github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/getlantern/systray"
 )
@@ -43,6 +45,7 @@ var coinMenusMap = map[string]*systray.MenuItem{}
 
 func onReady() {
 	systray.SetTitle("COIN")
+	systray.SetIcon(imgs.BtcIcon)
 
 	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT"}
 
