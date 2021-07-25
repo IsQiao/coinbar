@@ -15,6 +15,10 @@ import (
 )
 
 func getPricesSetTitle() {
+	//os.Setenv("https_proxy", "http://127.0.0.1:7890")
+	//os.Setenv("http_proxy", "http://127.0.0.1:7890")
+	//os.Setenv("all_proxy", "socks5://127.0.0.1:7890")
+
 	defer time.Sleep(5 * time.Second)
 	url := "https://api1.binance.com/api/v3/ticker/price"
 	var prices []SymbolPrice
@@ -44,10 +48,10 @@ func main() {
 var coinMenusMap = map[string]*systray.MenuItem{}
 
 func onReady() {
-	systray.SetTitle("COIN")
+	//systray.SetTitle("COIN")
 	systray.SetIcon(imgs.BtcIcon)
 
-	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT"}
+	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT", "UNIUSDT", "EGLDUSDT", "EOSUSDT", "ICPUSDT", "BNBUSDT"}
 
 	for _, white := range whiteLists {
 		menuItem := systray.AddMenuItem(fmt.Sprintf("%v loading...", SymbolFormat(white)), "")
