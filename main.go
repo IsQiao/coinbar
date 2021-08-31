@@ -5,8 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -14,22 +19,92 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func getPricesSetTitle() {
-	//os.Setenv("https_proxy", "http://127.0.0.1:7890")
-	//os.Setenv("http_proxy", "http://127.0.0.1:7890")
-	//os.Setenv("all_proxy", "socks5://127.0.0.1:7890")
+var config Config
 
+func getCfgPath() string {
+	dirname, _ := os.UserHomeDir()
+	return dirname + "/.coinbar/config.json"
+}
+
+type Config struct {
+	FavoriteList []string
+	ProxyAddr    string
+}
+
+func loadCfg() (*Config, error) {
+	path := getCfgPath()
+	file, err := os.OpenFile(path, syscall.O_RDWR, os.ModeAppend)
+	if os.IsNotExist(err) {
+		init := Config{}
+		saveCfg(init)
+		return &init, nil
+	}
+
+	defer func() {
+		if err = file.Close(); err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	fileStr, err := ioutil.ReadAll(file)
+	var data Config
+	err = json.Unmarshal(fileStr, &data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &data, nil
+}
+
+func saveCfg(cfg Config) error {
+	path := getCfgPath()
+	dirPath := filepath.Dir(path)
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		err = os.Mkdir(dirPath, 0755)
+	}
+	file, _ := json.MarshalIndent(cfg, "", " ")
+	_ = ioutil.WriteFile(path, file, 0644)
+	return nil
+}
+
+func getPricesSetTitle() {
 	defer time.Sleep(5 * time.Second)
-	url := "https://api1.binance.com/api/v3/ticker/price"
-	var prices []SymbolPrice
-	err := getJson(url, &prices)
+	items, err := getData()
 	if err != nil {
 		logrus.Error(err)
 	}
 
-	for _, item := range prices {
+	for _, item := range items {
 		if val, ok := coinMenusMap[item.Symbol]; ok {
-			val.SetTitle(fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
+			if symbol := SymbolFormat(item.Symbol); symbol != "" {
+				val.SetTitle(fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
+			}
+		}
+	}
+
+}
+
+func getData() ([]SymbolPrice, error) {
+	url := "https://api1.binance.com/api/v3/ticker/price"
+	var items []SymbolPrice
+	err := getJson(url, &items)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Symbol < items[j].Symbol
+	})
+
+	return items, nil
+}
+
+func loadSelectList() {
+	selector := systray.AddMenuItem("select your list", "")
+	items, _ := getData()
+
+	for _, item := range items {
+		if symbol := SymbolFormat(item.Symbol); symbol != "" {
+			selector.AddSubMenuItemCheckbox(SymbolFormat(item.Symbol), "", false)
 		}
 	}
 }
@@ -48,17 +123,23 @@ func main() {
 var coinMenusMap = map[string]*systray.MenuItem{}
 
 func onReady() {
-	//systray.SetTitle("COIN")
+	cfg, _ := loadCfg()
+	if cfg.ProxyAddr != "" {
+		os.Setenv("all_proxy", cfg.ProxyAddr)
+	}
+	config = *cfg
+
 	systray.SetIcon(imgs.BtcIcon)
 
-	whiteLists := []string{"NEARUSDT", "GTCUSDT", "BTCUSDT", "ETHUSDT", "SOLUSDT", "DOTUSDT", "KSMUSDT", "UNIUSDT", "EGLDUSDT", "EOSUSDT", "ICPUSDT", "BNBUSDT"}
-
-	for _, white := range whiteLists {
+	for _, white := range cfg.FavoriteList {
 		menuItem := systray.AddMenuItem(fmt.Sprintf("%v loading...", SymbolFormat(white)), "")
 		if _, ok := coinMenusMap[white]; !ok {
 			coinMenusMap[white] = menuItem
 		}
 	}
+
+	systray.AddSeparator()
+	loadSelectList()
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
 
@@ -82,9 +163,23 @@ type SymbolPrice struct {
 }
 
 func SymbolFormat(symbol string) string {
-	result := symbol
-	result = strings.Replace(result, "USDT", "/USDT", 1)
-	return result
+	list := []string{"USD", "USDT", "ETH", "BTC", "BNB", "USDC", "XRP", "DAI", "GBP", "EUR", "BRL", "TRY", "RUB", "AUD", "KRW"}
+	found := false
+
+	for _, s := range list {
+		if strings.HasSuffix(symbol, s) {
+			symbol = strings.TrimSuffix(symbol, s) + "/" + s
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		fmt.Println(symbol)
+		return ""
+	}
+
+	return symbol
 }
 
 var myClient = &http.Client{Timeout: 10 * time.Second}
@@ -106,21 +201,4 @@ func getJson(url string, target interface{}) error {
 		return err
 	}
 	return nil
-}
-
-func format12(x float64) string {
-	if x >= 1e12 {
-		// Check to see how many fraction digits fit in:
-		s := fmt.Sprintf("%.g", x)
-		format := fmt.Sprintf("%%12.%dg", 12-len(s))
-		return fmt.Sprintf(format, x)
-	}
-
-	// Check to see how many fraction digits fit in:
-	s := fmt.Sprintf("%.0f", x)
-	if len(s) == 12 {
-		return s
-	}
-	format := fmt.Sprintf("%%%d.%df", len(s), 12-len(s)-1)
-	return fmt.Sprintf(format, x)
 }
