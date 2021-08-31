@@ -19,8 +19,6 @@ import (
 	"github.com/getlantern/systray"
 )
 
-var config Config
-
 func getCfgPath() string {
 	dirname, _ := os.UserHomeDir()
 	return dirname + "/.coinbar/config.json"
@@ -33,6 +31,7 @@ type Config struct {
 
 func loadCfg() (*Config, error) {
 	path := getCfgPath()
+	fmt.Println("Path: ", path)
 	file, err := os.OpenFile(path, syscall.O_RDWR, os.ModeAppend)
 	if os.IsNotExist(err) {
 		init := Config{}
@@ -68,6 +67,15 @@ func saveCfg(cfg Config) error {
 }
 
 func getPricesSetTitle() {
+	cfg, _ := loadCfg()
+
+	fmt.Println("config.ProxyAddr", cfg.ProxyAddr)
+	fmt.Println("config.FavoriteList", cfg.FavoriteList)
+	if cfg.ProxyAddr != "" {
+		os.Setenv("https_proxy", cfg.ProxyAddr)
+		os.Setenv("http_proxy", cfg.ProxyAddr)
+	}
+
 	defer time.Sleep(5 * time.Second)
 	items, err := getData()
 	if err != nil {
@@ -123,13 +131,8 @@ func main() {
 var coinMenusMap = map[string]*systray.MenuItem{}
 
 func onReady() {
-	cfg, _ := loadCfg()
-	if cfg.ProxyAddr != "" {
-		os.Setenv("all_proxy", cfg.ProxyAddr)
-	}
-	config = *cfg
-
 	systray.SetIcon(imgs.BtcIcon)
+	cfg, _ := loadCfg()
 
 	for _, white := range cfg.FavoriteList {
 		menuItem := systray.AddMenuItem(fmt.Sprintf("%v loading...", SymbolFormat(white)), "")
