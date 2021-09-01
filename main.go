@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"github.com/gen2brain/dlgs"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"net/url"
+	"os/exec"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -53,8 +56,29 @@ func initFavList() {
 		menuItem := systray.AddMenuItem("unset", "")
 		menuItem.Hide()
 		setFavMenuList(menuItem, i)
+
+		go func(i int) {
+			for {
+				select {
+				case <-menuItem.ClickedCh:
+					openFav(i)
+				}
+			}
+		}(i)
 	}
 }
+
+func openFav(index int) {
+	favSymbolMapLock.Lock()
+	defer favSymbolMapLock.Unlock()
+	if symbol, ok := favSymbolMap[index]; ok {
+		url := fmt.Sprintf("https://www.binance.com/zh-CN/trade/%s?layout=pro", symbol)
+		openBrowser(url)
+	}
+}
+
+var favSymbolMapLock = new(sync.Mutex)
+var favSymbolMap = map[int]string{}
 
 func refreshPrices() {
 	defer time.Sleep(5 * time.Second)
@@ -63,11 +87,17 @@ func refreshPrices() {
 		logrus.Error(err)
 	}
 
+	favSymbolMapLock.Lock()
+	defer favSymbolMapLock.Unlock()
+
 	var FavItems []string
+	var i = 0
 	for _, item := range items {
 		contained := containFavoriteItem(item.Symbol)
 		if contained {
 			FavItems = append(FavItems, fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
+			favSymbolMap[i] = item.Symbol
+			i++
 		}
 	}
 
@@ -93,6 +123,24 @@ func getData() ([]SymbolPrice, error) {
 	})
 
 	return items, nil
+}
+
+func openBrowser(url string) {
+	var err error
+
+	switch runtime.GOOS {
+	case "linux":
+		err = exec.Command("xdg-open", url).Start()
+	case "windows":
+		err = exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	case "darwin":
+		err = exec.Command("open", url).Start()
+	default:
+		err = fmt.Errorf("unsupported platform")
+	}
+	if err != nil {
+		log.Fatal(err)
+	}
 }
 
 func containFavoriteItem(symbol string) bool {
@@ -170,7 +218,6 @@ func setList(item *systray.MenuItem) {
 		cfg.FavoriteList = append(cfg.FavoriteList, currentSymbol)
 		config.Save(cfg)
 		item.Check()
-		//showPriceItem(currentSymbol)
 	} else {
 		if !contained {
 			return
