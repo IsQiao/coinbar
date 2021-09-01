@@ -1,4 +1,4 @@
-package cfg
+package config
 
 import (
 	"encoding/json"
@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 )
 
@@ -16,17 +17,20 @@ func getCfgPath() string {
 }
 
 type Config struct {
+	Lock         *sync.Mutex
 	FavoriteList []string
 	ProxyAddr    string
 }
 
-func getCfg() (*Config, error) {
+func GetCfg() (*Config, error) {
 	path := getCfgPath()
 	fmt.Println("Path: ", path)
 	file, err := os.OpenFile(path, syscall.O_RDWR, os.ModeAppend)
 	if os.IsNotExist(err) {
-		init := Config{}
-		saveCfg(init)
+		init := Config{
+			Lock: new(sync.Mutex),
+		}
+		Save(init)
 		return &init, nil
 	}
 
@@ -43,10 +47,12 @@ func getCfg() (*Config, error) {
 		return nil, err
 	}
 
+	data.Lock = new(sync.Mutex)
+
 	return &data, nil
 }
 
-func saveCfg(cfg Config) error {
+func Save(cfg Config) error {
 	path := getCfgPath()
 	dirPath := filepath.Dir(path)
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {

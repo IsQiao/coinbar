@@ -1,17 +1,17 @@
 package main
 
 import (
+	"coinbar/config"
 	"coinbar/imgs"
 	"encoding/json"
 	"fmt"
+	"github.com/gen2brain/dlgs"
 	"io/ioutil"
-	"log"
 	"net/http"
-	"os"
-	"path/filepath"
+	"net/url"
 	"sort"
 	"strings"
-	"syscall"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -19,77 +19,66 @@ import (
 	"github.com/getlantern/systray"
 )
 
-func getCfgPath() string {
-	dirname, _ := os.UserHomeDir()
-	return dirname + "/.coinbar/config.json"
-}
+var coinListMapLock = new(sync.Mutex)
+var favListMapLock = new(sync.Mutex)
+var coinListMenuMap = make(map[*systray.MenuItem]string)
+var favMenusMap = map[int]*systray.MenuItem{}
 
-type Config struct {
-	FavoriteList []string
-	ProxyAddr    string
-}
+var cfg config.Config
 
-func loadCfg() (*Config, error) {
-	path := getCfgPath()
-	fmt.Println("Path: ", path)
-	file, err := os.OpenFile(path, syscall.O_RDWR, os.ModeAppend)
-	if os.IsNotExist(err) {
-		init := Config{}
-		saveCfg(init)
-		return &init, nil
-	}
-
-	defer func() {
-		if err = file.Close(); err != nil {
-			log.Fatal(err)
+func coinListContain(symbol string) bool {
+	coinListMapLock.Lock()
+	defer coinListMapLock.Unlock()
+	for _, s := range coinListMenuMap {
+		if symbol == s {
+			return true
 		}
-	}()
-
-	fileStr, err := ioutil.ReadAll(file)
-	var data Config
-	err = json.Unmarshal(fileStr, &data)
-	if err != nil {
-		return nil, err
 	}
-
-	return &data, nil
+	return false
 }
 
-func saveCfg(cfg Config) error {
-	path := getCfgPath()
-	dirPath := filepath.Dir(path)
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		err = os.Mkdir(dirPath, 0755)
+func loadCfg() error {
+	config, err := config.GetCfg()
+	if err != nil {
+		return err
 	}
-	file, _ := json.MarshalIndent(cfg, "", " ")
-	_ = ioutil.WriteFile(path, file, 0644)
+	cfg = *config
 	return nil
 }
 
-func getPricesSetTitle() {
-	cfg, _ := loadCfg()
+const MAX_FAV_COUNT = 50
 
-	fmt.Println("config.ProxyAddr", cfg.ProxyAddr)
-	fmt.Println("config.FavoriteList", cfg.FavoriteList)
-	if cfg.ProxyAddr != "" {
-		os.Setenv("https_proxy", cfg.ProxyAddr)
-		os.Setenv("http_proxy", cfg.ProxyAddr)
+func initFavList() {
+	for i := 0; i < MAX_FAV_COUNT; i++ {
+		menuItem := systray.AddMenuItem("unset", "")
+		menuItem.Hide()
+		setFavMenuList(menuItem, i)
 	}
+}
 
+func refreshPrices() {
 	defer time.Sleep(5 * time.Second)
 	items, err := getData()
 	if err != nil {
 		logrus.Error(err)
 	}
 
+	var FavItems []string
 	for _, item := range items {
-		if val, ok := coinMenusMap[item.Symbol]; ok {
-			if symbol := SymbolFormat(item.Symbol); symbol != "" {
-				val.SetTitle(fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
-			}
+		contained := containFavoriteItem(item.Symbol)
+		if contained {
+			FavItems = append(FavItems, fmt.Sprintf("%s: %v", SymbolFormat(item.Symbol), item.Price))
 		}
 	}
 
+	for i := 0; i < MAX_FAV_COUNT; i++ {
+		if len(FavItems) >= i+1 {
+			favMenusMap[i].SetTitle(FavItems[i])
+			favMenusMap[i].Show()
+		} else {
+			favMenusMap[i].Hide()
+		}
+	}
 }
 
 func getData() ([]SymbolPrice, error) {
@@ -106,44 +95,125 @@ func getData() ([]SymbolPrice, error) {
 	return items, nil
 }
 
-func loadSelectList() {
-	selector := systray.AddMenuItem("select your list", "")
+func containFavoriteItem(symbol string) bool {
+	cfg.Lock.Lock()
+	defer cfg.Lock.Unlock()
+	for _, favoriteItem := range cfg.FavoriteList {
+		if symbol == favoriteItem {
+			return true
+		}
+	}
+	return false
+}
+
+func setFavMenuList(menu *systray.MenuItem, index int) {
+	favListMapLock.Lock()
+	defer favListMapLock.Unlock()
+	favMenusMap[index] = menu
+}
+
+func setCoinListMap(menu *systray.MenuItem, symbol string) {
+	coinListMapLock.Lock()
+	defer coinListMapLock.Unlock()
+	coinListMenuMap[menu] = symbol
+}
+
+func getCoinListItem(menu *systray.MenuItem) string {
+	coinListMapLock.Lock()
+	defer coinListMapLock.Unlock()
+	if val, ok := coinListMenuMap[menu]; ok {
+		return val
+	}
+	return ""
+}
+
+var coinListMenu *systray.MenuItem
+
+func initCoinList() {
+	coinListMenu = systray.AddMenuItem("Select Your Token", "")
+	go loadCoinList()
+}
+
+func loadCoinList() {
 	items, _ := getData()
 
 	for _, item := range items {
 		if symbol := SymbolFormat(item.Symbol); symbol != "" {
-			selector.AddSubMenuItemCheckbox(SymbolFormat(item.Symbol), "", false)
+			checked := containFavoriteItem(item.Symbol)
+			menu := coinListMenu.AddSubMenuItemCheckbox(SymbolFormat(item.Symbol), "", checked)
+
+			setCoinListMap(menu, item.Symbol)
+
+			go func() {
+				for {
+					select {
+					case <-menu.ClickedCh:
+						setList(menu)
+					}
+				}
+			}()
 		}
+	}
+}
+
+func setList(item *systray.MenuItem) {
+	currentSymbol := getCoinListItem(item)
+	contained := containFavoriteItem(currentSymbol)
+
+	cfg.Lock.Lock()
+	defer cfg.Lock.Unlock()
+
+	if !item.Checked() {
+		if contained {
+			return
+		}
+		cfg.FavoriteList = append(cfg.FavoriteList, currentSymbol)
+		config.Save(cfg)
+		item.Check()
+		//showPriceItem(currentSymbol)
+	} else {
+		if !contained {
+			return
+		}
+		var currentFavList []string
+		for _, s := range cfg.FavoriteList {
+			if s != currentSymbol {
+				currentFavList = append(currentFavList, s)
+			}
+		}
+		cfg.FavoriteList = currentFavList
+		config.Save(cfg)
+		item.Uncheck()
 	}
 }
 
 func priceLoop() {
 	for {
-		getPricesSetTitle()
+		refreshPrices()
+	}
+}
+
+func init() {
+	loadCfg()
+	if cfg.ProxyAddr != "" {
+		refreshProxy(cfg.ProxyAddr)
 	}
 }
 
 func main() {
-	go priceLoop()
 	systray.Run(onReady, onExit)
 }
 
-var coinMenusMap = map[string]*systray.MenuItem{}
-
 func onReady() {
 	systray.SetIcon(imgs.BtcIcon)
-	cfg, _ := loadCfg()
-
-	for _, white := range cfg.FavoriteList {
-		menuItem := systray.AddMenuItem(fmt.Sprintf("%v loading...", SymbolFormat(white)), "")
-		if _, ok := coinMenusMap[white]; !ok {
-			coinMenusMap[white] = menuItem
-		}
-	}
+	initFavList()
 
 	systray.AddSeparator()
-	loadSelectList()
+	initCoinList()
+	inputFav := systray.AddMenuItem("Input Your Token", "Input your favorite token")
+	sysProxy := systray.AddMenuItem("Set Proxy", "Set system proxy")
 	systray.AddSeparator()
+
 	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
 
 	go func() {
@@ -152,9 +222,78 @@ func onReady() {
 			case <-mQuit.ClickedCh:
 				systray.Quit()
 				return
+			case <-sysProxy.ClickedCh:
+				setProxy()
+			case <-inputFav.ClickedCh:
+				showInputFav()
 			}
 		}
 	}()
+
+	go priceLoop()
+}
+
+func checkCoinListItem(symbol string) {
+	coinListMapLock.Lock()
+	defer coinListMapLock.Unlock()
+
+	for menu, s := range coinListMenuMap {
+		if s == symbol {
+			menu.Check()
+			return
+		}
+	}
+}
+
+func showInputFav() {
+	input, _, err := dlgs.Entry("Input your favorite token", "Token", "")
+	if err != nil {
+		logrus.Error(err)
+		return
+	}
+
+	input = strings.ReplaceAll(input, "/", "")
+
+	if input == "" {
+		return
+	}
+
+	if !coinListContain(input) {
+		dlgs.Error("Error", "Invalid Token")
+		return
+	}
+
+	if containFavoriteItem(input) {
+		return
+	}
+
+	cfg.FavoriteList = append(cfg.FavoriteList, input)
+	config.Save(cfg)
+
+	checkCoinListItem(input)
+}
+
+func setProxy() {
+	input, _, err := dlgs.Entry("Set System Proxy", "Proxy Address", cfg.ProxyAddr)
+	if err != nil {
+		logrus.Error(err)
+		return
+	}
+
+	if input != "" && input != cfg.ProxyAddr {
+		cfg.ProxyAddr = input
+		config.Save(cfg)
+		refreshProxy(input)
+		go loadCoinList()
+	}
+}
+
+func refreshProxy(proxyAddr string) {
+	proxyUrl, _ := url.Parse(proxyAddr)
+	transport := http.Transport{
+		Proxy: http.ProxyURL(proxyUrl),
+	}
+	myClient.Transport = &transport
 }
 
 func onExit() {
@@ -185,7 +324,7 @@ func SymbolFormat(symbol string) string {
 	return symbol
 }
 
-var myClient = &http.Client{Timeout: 10 * time.Second}
+var myClient = &http.Client{Timeout: 3 * time.Second}
 
 func getJson(url string, target interface{}) error {
 	r, err := myClient.Get(url)
